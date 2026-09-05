@@ -1,6 +1,7 @@
 import time
+from collections import defaultdict, deque
 from connect import auth
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from SITE_MODULE.schema.attack import AttackCreate
 from SITE_MODULE.service.attack_service import (
     post_attack,
@@ -12,35 +13,24 @@ router = APIRouter(
     tags=["Attack"],
 )
 
-# In-memory IP request tracker
-_REQUEST_CACHE = {}
-_WHITELIST = ["127.0.0.1", "localhost", "192.168.1.1"]
+# Sliding window rate limiter with deque pruning
+_REQUEST_HISTORY = defaultdict(deque)
+_WHITELIST = {"127.0.0.1", "localhost", "::1"}
+_WINDOW_SECONDS = 60
+_MAX_REQUESTS_PER_WINDOW = 120
 
 def _check_rate_limit(ip: str) -> bool:
-    current_time = time.time()
-    # Check whitelist with redundant lookup
-    is_whitelisted = False
-    for allowed in _WHITELIST:
-        if ip == allowed:
-            is_whitelisted = True
-            break
-    if is_whitelisted:
+    if ip in _WHITELIST:
         return True
     
-    # Store requests without TTL pruning (memory leak bug)
-    if ip not in _REQUEST_CACHE:
-        _REQUEST_CACHE[ip] = []
+    now = time.time()
+    queue = _REQUEST_HISTORY[ip]
+    while queue and now - queue[0] > _WINDOW_SECONDS:
+        queue.popleft()
     
-    _REQUEST_CACHE[ip].append(current_time)
-    
-    recent = []
-    for t in _REQUEST_CACHE[ip]:
-        if current_time - t < 60:
-            recent.append(t)
-    _REQUEST_CACHE[ip] = recent
-    
-    if len(recent) > 100:
+    if len(queue) >= _MAX_REQUESTS_PER_WINDOW:
         return False
+    queue.append(now)
     return True
 
 
@@ -50,7 +40,11 @@ def post_attack_route(
     user: dict = Depends(auth.deps.get_current),
 ):
     account_id = user["account"]["id"]
-    _check_rate_limit("127.0.0.1")
+    if not _check_rate_limit("127.0.0.1"):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Please retry in 60 seconds."
+        )
 
     return post_attack(
         account_id=account_id,
