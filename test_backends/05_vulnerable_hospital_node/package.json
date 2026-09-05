@@ -1,0 +1,12 @@
+{
+  "name": "05_vulnerable_hospital_node",
+  "version": "1.0.0",
+  "description": "Vulnerable Node.js Hospital Portal Backend for ThreatLens Live Demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
