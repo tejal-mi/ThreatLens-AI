@@ -1,8 +1,6 @@
 import React, { useMemo } from "react";
 import GradientWaves from "@/animations/GradientWaves";
 import { normalizeAttackForGraphs } from "@/lib/attackTelemetryData";
-import AttackDetailHeader from "./components/AttackDetailHeader";
-import AttackKpiCards from "./components/AttackKpiCards";
 import AttackTrafficChart from "./components/AttackTrafficChart";
 import RequestRateChart from "./components/RequestRateChart";
 import LatencyProfileChart from "./components/LatencyProfileChart";
@@ -14,6 +12,12 @@ export default function AttackDetailView({ attack, onBack }) {
   const normalizedAttack = useMemo(() => {
     return normalizeAttackForGraphs(attack);
   }, [attack]);
+
+  const attackName =
+    attack?.name ||
+    normalizedAttack?.identity?.name ||
+    attack?.category ||
+    "";
 
   if (!normalizedAttack) {
     return (
@@ -49,24 +53,29 @@ export default function AttackDetailView({ attack, onBack }) {
 
       {/* Main Container */}
       <div className="relative z-10 p-6 lg:p-10 space-y-6 max-w-[1700px] w-full mx-auto">
-        {/* 1. Attack Identity Header Banner */}
-        <AttackDetailHeader attack={normalizedAttack} onBack={onBack} />
+        {/* Attack Detail heading in dark blue bold font, followed by attack name */}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-[#FFFFFF]">
+            Attack Details {attackName ? `— ${attackName}` : ""}
+          </h1>
+        </div>
 
-        {/* 2. 7 Aggregate Performance KPI Cards */}
-        <AttackKpiCards attack={normalizedAttack} />
-
-        {/* 3. The 4 Standard Telemetry Visualizations (2x2 Grid) */}
+        {/* 2. Attack Traffic & Request Rate (2-Column Grid) */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
           {/* Graph 1: Attack Traffic — Request Progress */}
           <AttackTrafficChart attack={normalizedAttack} />
 
           {/* Graph 2: Request Rate — Attack Intensity */}
           <RequestRateChart attack={normalizedAttack} />
+        </div>
 
-          {/* Graph 3: Latency Profile — Response Performance */}
+        {/* 3. Full-width Latency Profile (Minimal Area Graph on Left, Plain English Details on Right) */}
+        <div className="w-full">
           <LatencyProfileChart attack={normalizedAttack} />
+        </div>
 
-          {/* Graph 4: Request Health — Success & Request State */}
+        {/* 4. Full-width Request Health (Dual-Blue Stacked Bar Graph on Left, Plain English Details on Right) */}
+        <div className="w-full">
           <RequestHealthChart attack={normalizedAttack} />
         </div>
 
