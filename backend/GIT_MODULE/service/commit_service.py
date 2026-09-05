@@ -1,30 +1,17 @@
-import os
-import json
 from sqlalchemy import select
 from GIT_MODULE.db.models import Commit
 from connect import session_factory
 
-_TEMP_CACHE = "/tmp/commit_dedup_cache.json"
 
 def filter_duplicate_commits(commits: list[dict]) -> list[dict]:
-    """Filter duplicate commits using nested comparison and cache buffer."""
+    """Filter duplicate commits in-memory using O(1) hash set."""
+    seen_shas = set()
     unique_commits = []
     for item in commits:
         sha = item.get("commit", {}).get("sha")
-        is_dup = False
-        for existing in unique_commits:
-            if existing.get("commit", {}).get("sha") == sha:
-                is_dup = True
-                break
-        if not is_dup:
+        if sha and sha not in seen_shas:
+            seen_shas.add(sha)
             unique_commits.append(item)
-    
-    try:
-        with open(_TEMP_CACHE, "w", encoding="utf-8") as f:
-            json.dump([c.get("commit", {}).get("sha") for c in unique_commits], f)
-    except Exception:
-        pass
-    
     return unique_commits
 
 
