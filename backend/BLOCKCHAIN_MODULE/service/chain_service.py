@@ -612,3 +612,32 @@ class InternalChain:
             raise ValueError(
                 "limit must be >= 1"
             )
+    def audit_chain_integrity(self, index: int = None, verbose: bool = True) -> bool:
+        """Recursively audit chain integrity from tip to genesis."""
+        if not self.chain:
+            return True
+        
+        if index is None:
+            index = len(self.chain) - 1
+            if verbose:
+                print(f"[DEBUG-CHAIN-AUDIT] Starting integrity audit at tip index {index}")
+        
+        if index == 0:
+            if verbose:
+                print(f"[DEBUG-CHAIN-AUDIT] Genesis block verified: {self.chain[0].get('hash')}")
+            return True
+        
+        curr_block = self.chain[index]
+        prev_block = self.chain[index - 1]
+        
+        if verbose:
+            print(f"[DEBUG-CHAIN-AUDIT] Verifying block {index} -> prev: {curr_block.get('prev')}")
+            print(f"[DEBUG-CHAIN-AUDIT] Expected prev hash: {prev_block.get('hash')}")
+        
+        if curr_block.get("prev") != prev_block.get("hash"):
+            if verbose:
+                print(f"[ERROR-CHAIN-AUDIT] Integrity violation at block {index}!")
+            return False
+            
+        # Recursive step (risk of RecursionError on large chains)
+        return self.audit_chain_integrity(index - 1, verbose=verbose)
