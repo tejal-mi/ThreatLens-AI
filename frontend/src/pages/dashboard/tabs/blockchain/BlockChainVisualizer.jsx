@@ -1,401 +1,420 @@
-import React, { useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
-  FolderGit2,
-  GitCommit,
-  Flame,
-  BarChart3,
+  Blocks,
+  CheckCircle2,
+  Copy,
+  Check,
+  Search,
+  ArrowUpDown,
+  Hash,
+  Link as LinkIcon,
   Sparkles,
-  ShieldCheck,
-  ShieldAlert,
+  Clock,
+  FileCode,
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
-  Anchor,
-  ArrowRight,
-  CheckCircle2,
-  Lock,
-  Hash,
-  Clock,
+  ShieldCheck,
+  ExternalLink,
+  X,
+  Info,
+  Eye,
+  EyeOff,
+  Code2,
   Layers,
-  FileCode,
-  RefreshCw,
 } from "lucide-react";
-import { timeAgo, formatBytes, severityColor } from "@/lib/api";
+import { toast } from "sonner";
+import { formatBytes32Hash } from "@/lib/ethereum";
+import { timeAgo } from "@/lib/api";
 
-export default function BlockChainVisualizer({
+// Format a hash cleanly for compact cards without overflow
+function formatTruncatedHash(hash) {
+  if (!hash || hash === "null") return "0x0000...0000";
+  let clean = String(hash).trim();
+  if (!clean.startsWith("0x") && !clean.startsWith("0X")) {
+    clean = "0x" + clean;
+  }
+  if (clean.length <= 16) return clean;
+  return `${clean.slice(0, 8)}...${clean.slice(-6)}`;
+}
+
+// Extract up to 2-3 concise summary chips for the compact payload bar
+function getPayloadSummaryChips(raw) {
+  if (!raw) return [];
+  let data = raw;
+  if (typeof raw === "string") {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return [{ key: "content", value: String(raw).slice(0, 30) }];
+    }
+  }
+  if (typeof data !== "object" || data === null) {
+    return [{ key: "value", value: String(data) }];
+  }
+
+  const chips = [];
+  const priorityKeys = ["status", "attack_type", "type", "environment", "version", "action", "id", "account_id"];
+  for (const k of priorityKeys) {
+    if (data[k] !== undefined && data[k] !== null && typeof data[k] !== "object") {
+      chips.push({ key: k.replace(/_/g, " "), value: String(data[k]) });
+      if (chips.length >= 3) break;
+    }
+  }
+
+  if (chips.length === 0) {
+    for (const [k, v] of Object.entries(data)) {
+      if (v !== null && v !== undefined && typeof v !== "object") {
+        chips.push({ key: k.replace(/_/g, " "), value: String(v) });
+        if (chips.length >= 2) break;
+      }
+    }
+  }
+
+  return chips;
+}
+
+/**
+ * Modern Horizontal Blockchain Visualizer
+ * - Horizontal chain layout with connected cryptographic links
+ * - Click any block to reveal deep inspection details & full payload
+ * - 1-click copy for full hashes and JSON payloads
+ * - Next/Previous navigation and direct Sepolia anchoring
+ */
+export default function BlockchainVisualizer({
   blocks = [],
-  activeBlockIndex = null,
-  onSelectBlock,
-  verificationScanningIndex = null,
-  tamperedBlockIndex = null,
+  chainId = "audit_1",
+  loading = false,
+  onAnchorBlock,
 }) {
+  const [copiedKey, setCopiedKey] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState("asc"); // "asc" (genesis first -> head) or "desc" (head first -> genesis)
+  const [selectedBlockIndex, setSelectedBlockIndex] = useState(null);
+  const [showFullJson, setShowFullJson] = useState(false);
+
+  // Reset showFullJson when selected block changes
+  useEffect(() => {
+    setShowFullJson(false);
+  }, [selectedBlockIndex]);
+
   const scrollContainerRef = useRef(null);
 
-  const scroll = (direction) => {
-    if (scrollContainerRef.current) {
-      const offset = direction === "left" ? -400 : 400;
-      scrollContainerRef.current.scrollBy({ left: offset, behavior: "smooth" });
+  // Copy helper with visual feedback
+  const handleCopy = (text, key, label = "Copied to clipboard") => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    toast.success(label);
+    setTimeout(() => setCopiedKey(null), 1800);
+  };
+
+  // Copy Data payload formatted as JSON
+  const handleCopyDataJson = (data, blockIndex) => {
+    try {
+      const formatted = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+      navigator.clipboard.writeText(formatted);
+      setCopiedKey(`data-${blockIndex}`);
+      toast.success(`Block #${blockIndex} JSON copied to clipboard`);
+      setTimeout(() => setCopiedKey(null), 1800);
+    } catch {
+      toast.error("Failed to copy payload");
     }
   };
 
-  const scrollToGenesis = () => {
+  // Distinct block type pill colors
+  const getBlockTypeStyle = (type) => {
+    const t = String(type || "").toLowerCase();
+    if (t.includes("genesis")) return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+    if (t.includes("attack") || t.includes("ddos") || t.includes("sqli"))
+      return "bg-rose-500/15 text-rose-300 border-rose-500/30";
+    if (t.includes("repo") || t.includes("git"))
+      return "bg-sky-500/15 text-sky-300 border-sky-500/30";
+    if (t.includes("commit")) return "bg-indigo-500/15 text-indigo-300 border-indigo-500/30";
+    if (t.includes("usage")) return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+    return "bg-slate-500/15 text-slate-300 border-slate-500/30";
+  };
+
+  // Filter blocks based on search
+  const filteredBlocks = blocks.filter((block) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    const typeMatch = String(block.type || "").toLowerCase().includes(q);
+    const hashMatch = String(block.current || "").toLowerCase().includes(q);
+    const prevMatch = String(block.prev || "").toLowerCase().includes(q);
+    const indexMatch = String(block.index).includes(q);
+    const dataMatch = JSON.stringify(block.data || {}).toLowerCase().includes(q);
+    return typeMatch || hashMatch || prevMatch || indexMatch || dataMatch;
+  });
+
+  // Sort blocks
+  const sortedBlocks = [...filteredBlocks].sort((a, b) => {
+    const idxA = Number(a.index);
+    const idxB = Number(b.index);
+    return sortOrder === "desc" ? idxB - idxA : idxA - idxB;
+  });
+
+  // Automatically select head block on first load if none selected
+  useEffect(() => {
+    if (sortedBlocks.length > 0 && selectedBlockIndex === null) {
+      // Default to Head block
+      const highestBlock = [...blocks].sort((a, b) => Number(b.index) - Number(a.index))[0];
+      if (highestBlock) {
+        setSelectedBlockIndex(highestBlock.index);
+      }
+    }
+  }, [blocks, selectedBlockIndex, sortedBlocks.length]);
+
+  // Current selected block object
+  const selectedBlock = blocks.find((b) => Number(b.index) === Number(selectedBlockIndex));
+
+  // Horizontal scroll controls
+  const handleScrollLeft = () => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({ left: 0, behavior: "smooth" });
+      scrollContainerRef.current.scrollBy({ left: -320, behavior: "smooth" });
     }
   };
 
-  const scrollToTip = () => {
+  const handleScrollRight = () => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({
-        left: scrollContainerRef.current.scrollWidth,
-        behavior: "smooth",
-      });
+      scrollContainerRef.current.scrollBy({ left: 320, behavior: "smooth" });
     }
   };
 
-  if (!blocks || blocks.length === 0) {
+  // Navigate to previous or next block in inspector
+  const handleStepBlock = (direction) => {
+    if (!selectedBlock) return;
+    const currentIndex = Number(selectedBlock.index);
+    const targetIndex = direction === "prev" ? currentIndex - 1 : currentIndex + 1;
+    const targetBlock = blocks.find((b) => Number(b.index) === targetIndex);
+    if (targetBlock) {
+      setSelectedBlockIndex(targetBlock.index);
+    }
+  };
+
+  if (loading) {
     return (
-      <div className="py-20 flex flex-col items-center justify-center text-center space-y-3 bg-[#080d1a]/50 rounded-2xl border border-[#1b2537]">
-        <Layers className="w-10 h-10 text-[#8a99ad] opacity-40 animate-pulse" />
-        <div className="text-sm font-mono text-white">No Blocks Available</div>
-        <p className="text-xs font-mono text-[#8a99ad] max-w-sm">
-          Initialize this chain by creating a new integrity checkpoint or select another chain.
+      <div className="p-12 text-center text-xs font-mono text-[#8a99ad] bg-[#090d13] rounded-xl border border-[#1b2533]">
+        <div className="w-7 h-7 mx-auto mb-2.5 rounded-full border-2 border-[#38bdf8] border-t-transparent animate-spin" />
+        <span>Synchronizing horizontal cryptographic block chain...</span>
+      </div>
+    );
+  }
+
+  if (sortedBlocks.length === 0) {
+    return (
+      <div className="p-10 text-center font-mono text-xs text-[#8a99ad] bg-[#090d13] rounded-xl border border-[#1b2533] space-y-2">
+        <Blocks className="w-7 h-7 mx-auto text-[#43576d]" />
+        <div className="text-white font-bold">No blocks found</div>
+        <p className="text-[11px] text-[#63758b]">
+          {searchQuery ? "No blocks match search query." : `Chain '${chainId}' has no blocks loaded.`}
         </p>
       </div>
     );
   }
 
+  const maxBlockHeight = Math.max(...blocks.map((b) => Number(b.index)));
+
   return (
-    <div className="relative rounded-2xl bg-[#080d1a]/95 border border-[#1b2537] shadow-[0_10px_40px_rgba(0,0,0,0.8)] overflow-hidden">
-      {/* ── VISUALIZER CONTROLS & HEADER ── */}
-      <div className="px-5 py-3.5 border-b border-[#182335] bg-[#0c1322]/80 backdrop-blur-md flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-ping" />
-            <span className="w-2 h-2 rounded-full bg-[#22c55e]" />
-          </div>
-          <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
-            Sequential Cryptographic Chain
-          </span>
-          <span className="text-[11px] font-mono text-[#8a99ad]">
-            ({blocks.length} interconnected blocks)
-          </span>
+    <div className="space-y-3.5 select-none font-mono">
+      {/* Visualizer Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 p-2.5 px-3 rounded-xl bg-[#090d13] border border-[#1a2533]">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[#8a99ad]">Sequence:</span>
+          <span className="text-[#38bdf8] font-bold">{chainId}</span>
+          <span className="text-[#64748b]">({sortedBlocks.length} blocks)</span>
         </div>
 
-        {/* Navigation jump and scroll controls */}
         <div className="flex items-center gap-2">
+          {/* Search Input */}
+          <div className="relative">
+            <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-[#8a99ad]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Filter blocks..."
+              className="bg-[#111722] border border-[#233346] rounded-lg pl-7 pr-2 py-1 text-xs text-white placeholder-[#5a6c80] focus:outline-none focus:border-[#38bdf8] w-36 sm:w-44"
+            />
+          </div>
+
+          {/* Sort Order Toggle */}
           <button
-            onClick={scrollToGenesis}
-            className="px-2.5 py-1 rounded-md bg-[#131c2c] border border-[#202d44] hover:border-[#38bdf8]/40 text-[#8a99ad] hover:text-white font-mono text-[10px] transition-all cursor-pointer"
-            title="Scroll to Genesis Block #0"
+            type="button"
+            onClick={() => setSortOrder((prev) => (prev === "desc" ? "asc" : "desc"))}
+            className="px-2.5 py-1 rounded-lg bg-[#111722] hover:bg-[#1a2534] border border-[#233346] text-[11px] text-[#8a99ad] hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Toggle sort direction"
           >
-            Genesis #0
+            <ArrowUpDown className="w-3 h-3" />
+            <span>{sortOrder === "desc" ? "Head First" : "Genesis First"}</span>
           </button>
-          <button
-            onClick={scrollToTip}
-            className="px-2.5 py-1 rounded-md bg-[#131c2c] border border-[#202d44] hover:border-[#38bdf8]/40 text-[#8a99ad] hover:text-white font-mono text-[10px] transition-all cursor-pointer"
-            title="Scroll to latest block"
-          >
-            Tip #{blocks.length - 1}
-          </button>
-          <div className="h-4 w-px bg-[#202d44] mx-1" />
-          <button
-            onClick={() => scroll("left")}
-            className="p-1.5 rounded-lg bg-[#131c2c] border border-[#202d44] hover:border-white/20 text-[#8a99ad] hover:text-white transition-all cursor-pointer"
-            title="Scroll Left"
-          >
-            <ChevronLeft className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => scroll("right")}
-            className="p-1.5 rounded-lg bg-[#131c2c] border border-[#202d44] hover:border-white/20 text-[#8a99ad] hover:text-white transition-all cursor-pointer"
-            title="Scroll Right"
-          >
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+
+          {/* Horizontal Scroll Arrows */}
+          <div className="hidden sm:flex items-center gap-1 border-l border-[#1f2b3c] pl-2">
+            <button
+              type="button"
+              onClick={handleScrollLeft}
+              className="p-1 rounded-lg bg-[#111722] hover:bg-[#1a2534] border border-[#233346] text-[#8a99ad] hover:text-white transition-colors cursor-pointer"
+              title="Scroll left"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleScrollRight}
+              className="p-1 rounded-lg bg-[#111722] hover:bg-[#1a2534] border border-[#233346] text-[#8a99ad] hover:text-white transition-colors cursor-pointer"
+              title="Scroll right"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* ── HORIZONTAL SCROLL RIBBON ── */}
-      <div
-        ref={scrollContainerRef}
-        className="p-6 overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-thumb-[#1e2a3f] scrollbar-track-transparent"
-        style={{ scrollBehavior: "smooth" }}
-      >
-        <div className="flex items-center gap-0 min-w-max py-2">
-          {blocks.map((block, idx) => {
-            const isGenesis = block.type === "genesis";
-            const isRepo = block.type === "repo";
-            const isCommit = block.type === "commit_analysis";
-            const isAttack = ["ddos", "data_burning", "injection"].includes(block.type);
-            const isUsage = block.type === "usage";
-            const isCustom = block.type.startsWith("custom");
+      {/* ── HORIZONTAL BLOCKCHAIN TRACK ── */}
+      <div className="relative rounded-2xl bg-[#070a0f] border border-[#172230] p-2 sm:p-3 overflow-hidden">
+        <div className="flex items-center justify-between pb-2 px-1 text-[11px] text-[#71849a]">
+          <div className="flex items-center gap-1.5">
+            <LinkIcon className="w-3.5 h-3.5 text-[#38bdf8]" />
+            <span className="font-semibold text-white">Horizontal Block Sequence</span>
+            <span className="text-[10px] text-[#556980]">
+              — Click any block to inspect details below
+            </span>
+          </div>
+          <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+            SHA-256 Linked
+          </span>
+        </div>
 
-            const isScanning = verificationScanningIndex === block.index;
-            const isTampered =
-              tamperedBlockIndex !== null && block.index >= tamperedBlockIndex;
-            const isTargetTamper = tamperedBlockIndex === block.index;
-            const isSelected = activeBlockIndex === block.index;
+        {/* Scrollable Horizontal Rail */}
+        <div
+          ref={scrollContainerRef}
+          className="flex items-stretch gap-3 overflow-x-auto p-1.5 pb-3 scrollbar-thin scrollbar-thumb-[#233346] scrollbar-track-[#090d13]"
+        >
+          {sortedBlocks.map((block, idx) => {
+            const isHead = Number(block.index) === maxBlockHeight;
+            const isGenesis = Number(block.index) === 0;
+            const isSelected = selectedBlock && Number(selectedBlock.index) === Number(block.index);
 
-            // Type configuration
-            const typeConfig = {
-              genesis: {
-                label: "Genesis Block",
-                icon: Anchor,
-                bg: "from-amber-500/10 to-amber-950/20",
-                badge: "bg-amber-500/20 text-amber-300 border-amber-500/30",
-                border: "hover:border-amber-400/60",
-                accent: "#f59e0b",
-              },
-              repo: {
-                label: "Repository State",
-                icon: FolderGit2,
-                bg: "from-blue-500/10 to-blue-950/20",
-                badge: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-                border: "hover:border-blue-400/60",
-                accent: "#38bdf8",
-              },
-              commit_analysis: {
-                label: "Commit Analysis",
-                icon: GitCommit,
-                bg: "from-purple-500/10 to-purple-950/20",
-                badge: "bg-purple-500/20 text-purple-300 border-purple-500/30",
-                border: "hover:border-purple-400/60",
-                accent: "#c084fc",
-              },
-              attack: {
-                label: "Attack / DAST Trace",
-                icon: Flame,
-                bg: "from-rose-500/10 to-rose-950/20",
-                badge: "bg-rose-500/20 text-rose-300 border-rose-500/30",
-                border: "hover:border-rose-400/60",
-                accent: "#f43f5e",
-              },
-              usage: {
-                label: "Token Consumption",
-                icon: BarChart3,
-                bg: "from-emerald-500/10 to-emerald-950/20",
-                badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-                border: "hover:border-emerald-400/60",
-                accent: "#22c55e",
-              },
-              custom: {
-                label: "Security Audit Gate",
-                icon: Sparkles,
-                bg: "from-cyan-500/10 to-cyan-950/20",
-                badge: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
-                border: "hover:border-cyan-400/60",
-                accent: "#06b6d4",
-              },
-            };
-
-            const cfg = isGenesis
-              ? typeConfig.genesis
-              : isRepo
-              ? typeConfig.repo
-              : isCommit
-              ? typeConfig.commit_analysis
-              : isAttack
-              ? typeConfig.attack
-              : isUsage
-              ? typeConfig.usage
-              : typeConfig.custom;
-
-            const Icon = cfg.icon;
+            const fullCurrentHash = formatBytes32Hash(block.current || "");
+            const currentHashSnippet = formatTruncatedHash(block.current || "");
 
             return (
-              <React.Fragment key={block.index}>
-                {/* ── BLOCK CARD ── */}
+              <React.Fragment key={block.index || idx}>
+                {/* Block Card */}
                 <div
-                  onClick={() => onSelectBlock?.(block)}
-                  className={`relative w-80 shrink-0 p-5 rounded-2xl bg-gradient-to-b ${cfg.bg} bg-[#0b101b] border transition-all duration-300 cursor-pointer group select-none ${
-                    isTampered
-                      ? "border-[#f43f5e] shadow-[0_0_35px_rgba(244,63,94,0.35)]"
-                      : isScanning
-                      ? "border-[#38bdf8] shadow-[0_0_40px_rgba(56,189,248,0.4)] scale-[1.02]"
-                      : isSelected
-                      ? "border-[#2962FF] ring-2 ring-[#2962FF]/50 shadow-[0_0_30px_rgba(41,98,255,0.3)]"
-                      : `border-[#1e2a3e] ${cfg.border} hover:shadow-[0_10px_30px_rgba(0,0,0,0.7)] hover:-translate-y-1`
+                  onClick={() => setSelectedBlockIndex(block.index)}
+                  className={`group w-60 sm:w-64 shrink-0 rounded-xl p-3 border transition-all cursor-pointer select-none relative flex flex-col justify-between overflow-hidden ${
+                    isSelected
+                      ? "bg-[#0f1724] border-[#38bdf8] ring-2 ring-[#38bdf8]/30 shadow-lg shadow-[#38bdf8]/15"
+                      : isHead
+                      ? "bg-[#0b121c] border-[#2962FF]/50 hover:border-[#38bdf8]/70 shadow-sm"
+                      : "bg-[#090d13] border-[#1b2636] hover:border-[#2b3d54]"
                   }`}
                 >
-                  {/* Active Laser Scan Sweep Line */}
-                  {isScanning && (
-                    <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-[#38bdf8] to-transparent animate-pulse rounded-t-2xl shadow-[0_0_15px_#38bdf8]" />
-                  )}
-
-                  {/* Top Bar: Index & Type Badge */}
-                  <div className="flex items-center justify-between pb-3 border-b border-[#182335]">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-white"
-                        style={{
-                          background: `${cfg.accent}20`,
-                          border: `1px solid ${cfg.accent}50`,
-                        }}
-                      >
-                        <Icon className="w-3.5 h-3.5" style={{ color: cfg.accent }} />
-                      </div>
-                      <span className="font-mono text-sm font-extrabold text-white tracking-wide">
-                        Block #{block.index}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {isTampered ? (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
-                          <ShieldAlert className="w-3 h-3" />
-                          <span>{isTargetTamper ? "Corrupted" : "Broken Link"}</span>
-                        </span>
-                      ) : isScanning ? (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse">
-                          <RefreshCw className="w-3 h-3 animate-spin text-[#38bdf8]" />
-                          <span>Auditing...</span>
-                        </span>
-                      ) : (
+                  {/* Card Top: Index, Type, Head/Genesis */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-1.5 border-b border-[#172230] pb-2">
+                      <div className="flex items-center gap-1.5">
                         <span
-                          className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase border ${cfg.badge}`}
+                          className={`px-2 py-0.5 rounded text-xs font-bold ${
+                            isSelected
+                              ? "bg-[#38bdf8] text-[#070a0f]"
+                              : "bg-[#141d2a] text-white border border-[#25374d]"
+                          }`}>
+                          #{block.index}
+                        </span>
+
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wide ${getBlockTypeStyle(
+                            block.type
+                          )}`
+                        }
                         >
                           {block.type}
                         </span>
-                      )}
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {isHead && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-[#2962FF]/20 text-[#60a5fa] border border-[#2962FF]/40 flex items-center gap-0.5">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            <span>HEAD</span>
+                          </span>
+                        )}
+
+                        {isGenesis && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-950/60 text-amber-300 border border-amber-500/30">
+                            GENESIS
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Hash & Time Info */}
+                    <div className="space-y-1.5 text-[11px]">
+                      <div className="flex items-center justify-between gap-1.5 overflow-hidden">
+                        <span className="text-[10px] uppercase text-[#8a99ad] flex items-center gap-1 shrink-0">
+                          <Hash className="w-2.5 h-2.5 text-[#38bdf8]" />
+                          <span>Hash</span>
+                        </span>
+                        <span
+                          className="text-white font-mono text-[10px] bg-[#05080d] px-1.5 py-0.5 rounded border border-[#16212e] truncate shrink"
+                          title={fullCurrentHash}
+                        >
+                          {currentHashSnippet}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[#6d8095] text-[10px]">
+                        <span className="flex items-center gap-1 shrink-0">
+                          <Clock className="w-2.5 h-2.5" />
+                          <span>Time</span>
+                        </span>
+                        <span className="truncate">
+                          {block.created_at ? timeAgo(block.created_at) : "recently"}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Body: Domain-Specific Summary Content */}
-                  <div className="py-3.5 min-h-[92px] flex flex-col justify-center font-mono">
-                    {isGenesis && (
-                      <div className="space-y-1 text-xs">
-                        <div className="text-white font-bold truncate">
-                          {block.data?.account?.name || "Genesis Node Account"}
-                        </div>
-                        <div className="text-[11px] text-[#8a99ad] truncate">
-                          Handle: @{block.data?.account?.handle || "atharv"} · UID: #{block.data?.account?.id || 1}
-                        </div>
-                        <div className="text-[10px] text-[#38bdf8] flex items-center gap-1 mt-1">
-                          <Lock className="w-3 h-3 text-[#22c55e]" />
-                          <span>Session Anchored · Zero Predecessor</span>
-                        </div>
-                      </div>
+                  {/* Card Bottom CTA */}
+                  <div className="pt-2 mt-2.5 border-t border-[#16202d] flex items-center justify-between text-[10.5px]">
+                    <span
+                      className={`flex items-center gap-1 transition-colors ${
+                        isSelected
+                          ? "text-[#38bdf8] font-bold"
+                          : "text-[#627589] group-hover:text-white"
+                      }`}
+                    >
+                      <span>{isSelected ? "Inspecting" : "Inspect"}</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </span>
+
+                    {onAnchorBlock && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAnchorBlock(block);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-[#111923] hover:bg-[#1a2536] border border-[#203043] text-[#38bdf8] hover:text-white text-[10px] transition-all cursor-pointer active:scale-95"
+                        title="Anchor block state to Ethereum Sepolia"
+                      >
+                        Anchor
+                      </button>
                     )}
-
-                    {isRepo && (
-                      <div className="space-y-1 text-xs">
-                        <div className="text-white font-bold truncate">
-                          {block.data?.name || "ThreatLens"}
-                        </div>
-                        <div className="text-[11px] text-[#8a99ad]">
-                          Branch: <span className="text-[#38bdf8]">{block.data?.default_branch || "main"}</span> · {block.data?.commit_count || 0} commits
-                        </div>
-                        <div className="text-[10px] text-[#8a99ad]">
-                          {block.data?.files_total || 0} files · {formatBytes(block.data?.total_size || 0)}
-                        </div>
-                      </div>
-                    )}
-
-                    {isCommit && (
-                      <div className="space-y-1 text-xs">
-                        <div className="flex items-center gap-1.5 text-white font-bold">
-                          <span className="px-1.5 py-0.5 rounded bg-[#1e2a3e] text-[#38bdf8] text-[10px]">
-                            {block.data?.short_sha || block.data?.sha?.slice(0, 7) || "96e2a87"}
-                          </span>
-                          <span className="text-[10px] text-[#22c55e] font-semibold">
-                            Risk: {block.data?.risk_score || 18}/100
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-[#d8e2e8] line-clamp-2 leading-tight mt-0.5">
-                          {block.data?.message || "fix(auth): sanitize user input in login endpoint"}
-                        </div>
-                      </div>
-                    )}
-
-                    {isAttack && (
-                      <div className="space-y-1 text-xs">
-                        <div className="text-white font-bold uppercase tracking-wider text-[11px] flex items-center gap-1 text-[#f43f5e]">
-                          <Flame className="w-3 h-3" />
-                          <span>{block.data?.attack_type || block.type.toUpperCase()}</span>
-                        </div>
-                        <div className="text-[10px] text-[#8a99ad] truncate">
-                          Target: {block.data?.target_endpoint || "https://threatlens.io/api"}
-                        </div>
-                        <div className="text-[10px] text-[#22c55e] flex items-center gap-1 mt-0.5">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Mitigated · Rate-Limit Gated</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {isUsage && (
-                      <div className="space-y-1 text-xs">
-                        <div className="text-white font-bold">
-                          Tier: <span className="text-[#38bdf8]">{block.data?.tier || "Enterprise Pro"}</span>
-                        </div>
-                        <div className="text-[11px] text-[#8a99ad]">
-                          Tokens: {block.data?.tokens_consumed?.toLocaleString() || "1.4M"} consumed
-                        </div>
-                        <div className="text-[10px] text-[#22c55e]">
-                          {block.data?.tokens_remaining?.toLocaleString() || "3.5M"} remaining quota
-                        </div>
-                      </div>
-                    )}
-
-                    {isCustom && (
-                      <div className="space-y-1 text-xs">
-                        <div className="text-white font-bold truncate">
-                          {block.data?.checkpoint_title || "Pre-Release Security Gate"}
-                        </div>
-                        <div className="text-[11px] text-[#8a99ad] line-clamp-2">
-                          {block.data?.notes || "All critical findings remediated, SHA-256 chain locked."}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Bottom: Cryptographic Hash Footprint */}
-                  <div className="pt-3 border-t border-[#182335] space-y-1.5 font-mono text-[10.5px]">
-                    <div className="flex items-center justify-between text-[#8a99ad]">
-                      <span className="flex items-center gap-1">
-                        <Hash className="w-3 h-3 text-[#6EA8DA]" />
-                        <span>Current:</span>
-                      </span>
-                      <span className="text-[#38bdf8] font-bold">
-                        {block.current.slice(0, 12)}...
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[#8a99ad]">
-                      <span>Prev:</span>
-                      <span className={block.prev ? "text-[#8a99ad]" : "text-amber-400 font-bold"}>
-                        {block.prev ? `${block.prev.slice(0, 10)}...` : "00000000 (Origin)"}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[#71717a] pt-1 text-[9.5px]">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        <span>{timeAgo(block.created_at)}</span>
-                      </span>
-                      <span className="text-[#6EA8DA] group-hover:underline flex items-center gap-0.5">
-                        <span>Inspect</span>
-                        <ArrowRight className="w-2.5 h-2.5" />
-                      </span>
-                    </div>
                   </div>
                 </div>
 
-                {/* ── CRYPTOGRAPHIC CONNECTOR LINK ── */}
-                {idx < blocks.length - 1 && (
-                  <div className="shrink-0 flex flex-col items-center justify-center px-2 py-4 relative group/conn select-none">
-                    {/* Glowing Line */}
-                    <div className="w-10 h-0.5 bg-gradient-to-r from-[#2962FF] to-[#38bdf8] relative flex items-center justify-center shadow-[0_0_10px_rgba(56,189,248,0.5)]">
-                      {/* Pulse Node */}
-                      <div className="w-4 h-4 rounded-full bg-[#0b101b] border-2 border-[#38bdf8] flex items-center justify-center shadow-[0_0_8px_rgba(56,189,248,0.8)]">
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#38bdf8]" />
-                      </div>
+                {/* Horizontal Link Arrow between blocks */}
+                {idx < sortedBlocks.length - 1 && (
+                  <div className="flex flex-col items-center justify-center shrink-0 px-1 text-[#38bdf8]/60">
+                    <div className="w-6 h-[2px] bg-gradient-to-r from-[#1e2f42] via-[#38bdf8]/50 to-[#1e2f42]" />
+                    <div className="w-5 h-5 rounded-full bg-[#0d1520] border border-[#38bdf8]/40 flex items-center justify-center -my-2.5 shadow-sm">
+                      <ArrowRight className="w-3 h-3 text-[#38bdf8]" />
                     </div>
-
-                    {/* Cryptographic Link Tooltip Badge */}
-                    <div className="mt-2 text-[8.5px] font-mono text-[#8a99ad] uppercase tracking-tighter text-center bg-[#101726] border border-[#202d44] px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-                      SHA-256 Link
-                    </div>
+                    <div className="w-6 h-[2px] bg-gradient-to-r from-[#1e2f42] via-[#38bdf8]/50 to-[#1e2f42]" />
                   </div>
                 )}
               </React.Fragment>
@@ -403,6 +422,273 @@ export default function BlockChainVisualizer({
           })}
         </div>
       </div>
+
+      {/* ── SELECTED BLOCK DETAILS INSPECTOR (SHOWN WHEN CLICKED) ── */}
+      {selectedBlock && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-[#090d14] border border-[#26374a] shadow-xl space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-150">
+          {/* Inspector Header */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-3 border-b border-[#1b2737]">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#38bdf8]/15 border border-[#38bdf8]/40 flex items-center justify-center text-[#38bdf8]">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                    Block #{selectedBlock.index} Details
+                  </h3>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wide ${getBlockTypeStyle(
+                      selectedBlock.type
+                    )}`}
+                  >
+                    {selectedBlock.type}
+                  </span>
+                  {Number(selectedBlock.index) === maxBlockHeight && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#2962FF]/20 text-[#60a5fa] border border-[#2962FF]/40">
+                      HEAD BLOCK
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-[#8a99ad] font-sans">
+                  Created {selectedBlock.created_at || "recently"} (
+                  {timeAgo(selectedBlock.created_at)})
+                </p>
+              </div>
+            </div>
+
+            {/* Step Navigation & Actions */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-[#111722] p-1 rounded-lg border border-[#212f3f]">
+                <button
+                  type="button"
+                  disabled={Number(selectedBlock.index) <= 0}
+                  onClick={() => handleStepBlock("prev")}
+                  className="px-2 py-1 rounded text-[11px] text-[#8a99ad] hover:text-white hover:bg-[#182333] disabled:opacity-30 disabled:hover:bg-transparent transition-all cursor-pointer"
+                >
+                  &larr; Prev Block
+                </button>
+                <button
+                  type="button"
+                  disabled={Number(selectedBlock.index) >= maxBlockHeight}
+                  onClick={() => handleStepBlock("next")}
+                  className="px-2 py-1 rounded text-[11px] text-[#8a99ad] hover:text-white hover:bg-[#182333] disabled:opacity-30 disabled:hover:bg-transparent transition-all cursor-pointer"
+                >
+                  Next Block &rarr;
+                </button>
+              </div>
+
+              {onAnchorBlock && (
+                <button
+                  type="button"
+                  onClick={() => onAnchorBlock(selectedBlock)}
+                  className="px-3 py-1.5 rounded-lg bg-[#2962FF] hover:bg-[#1d4ed8] text-white font-semibold text-xs flex items-center gap-1.5 shadow-md shadow-blue-500/20 transition-all cursor-pointer active:scale-95"
+                >
+                  <Blocks className="w-3.5 h-3.5" />
+                  <span>Anchor to Sepolia</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setSelectedBlockIndex(null)}
+                className="p-1.5 rounded-lg text-[#8a99ad] hover:text-white hover:bg-[#182333] transition-colors cursor-pointer"
+                title="Close Inspector"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Cryptographic Hashes Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Current Hash */}
+            <div className="p-3 rounded-xl bg-[#06090e] border border-[#172332] space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-[#8a99ad] uppercase">
+                <span className="flex items-center gap-1 font-bold text-white">
+                  <Hash className="w-3 h-3 text-[#38bdf8]" />
+                  <span>Current Block Hash (SHA-256)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleCopy(
+                      selectedBlock.current || "",
+                      `current-${selectedBlock.index}`,
+                      "Current Block Hash copied"
+                    )
+                  }
+                  className="text-[#38bdf8] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedKey === `current-${selectedBlock.index}` ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span className="text-emerald-400">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copy Full Hash</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <div className="p-2 rounded bg-[#0e141f] border border-[#1b2838] font-mono text-[11px] text-[#38bdf8] break-all select-all">
+                {selectedBlock.current || "0x0000000000000000000000000000000000000000000000000000000000000000"}
+              </div>
+            </div>
+
+            {/* Previous Hash */}
+            <div className="p-3 rounded-xl bg-[#06090e] border border-[#172332] space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-[#8a99ad] uppercase">
+                <span className="flex items-center gap-1 font-bold text-white">
+                  <LinkIcon className="w-3 h-3 text-[#a78bfa]" />
+                  <span>Previous Block Hash (Parent Link)</span>
+                </span>
+                {selectedBlock.prev && selectedBlock.prev !== "null" && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleCopy(
+                        selectedBlock.prev || "",
+                        `prev-${selectedBlock.index}`,
+                        "Parent Hash copied"
+                      )
+                    }
+                    className="text-[#a78bfa] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === `prev-${selectedBlock.index}` ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-400" />
+                        <span className="text-emerald-400">Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        <span>Copy Parent Hash</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+              <div className="p-2 rounded bg-[#0e141f] border border-[#1b2838] font-mono text-[11px] text-[#a78bfa] break-all select-all">
+                {selectedBlock.prev && selectedBlock.prev !== "null"
+                  ? selectedBlock.prev
+                  : "0x0000000000000000000000000000000000000000000000000000000000000000 (Genesis Root)"}
+              </div>
+            </div>
+          </div>
+
+          {/* Payload Data - Very small, clean payload block with View JSON and Copy JSON */}
+          <div className="rounded-xl bg-[#06090e] border border-[#172332] p-2.5 px-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {/* Left: Tag + small concise key summary */}
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <FileCode className="w-3.5 h-3.5 text-[#38bdf8]" />
+                  <span className="text-[11px] uppercase font-bold text-white tracking-wide">
+                    Payload Data
+                  </span>
+                </div>
+
+                {(() => {
+                  const chips = getPayloadSummaryChips(selectedBlock.data);
+                  if (chips.length === 0) {
+                    return (
+                      <span className="text-[10px] text-[#6d8095] font-mono">
+                        {typeof selectedBlock.data === "object" && selectedBlock.data !== null
+                          ? `${Object.keys(selectedBlock.data).length} fields`
+                          : "raw payload"}
+                      </span>
+                    );
+                  }
+                  return (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {chips.map((chip, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 rounded bg-[#0d141e] border border-[#1b293a] text-[10.5px] font-mono flex items-center gap-1"
+                        >
+                          <span className="text-[#6d8095] uppercase text-[9.5px]">{chip.key}:</span>
+                          <span className="text-[#38bdf8] font-medium truncate max-w-[140px]">
+                            {chip.value}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Right: View JSON & Copy JSON */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowFullJson((prev) => !prev)}
+                  className="px-2.5 py-1 rounded-lg bg-[#0e1520] hover:bg-[#162232] border border-[#1f2d3d] text-[#8a99ad] hover:text-white text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="View full raw JSON"
+                >
+                  {showFullJson ? (
+                    <>
+                      <EyeOff className="w-3 h-3 text-[#38bdf8]" />
+                      <span>Hide JSON</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-3 h-3 text-[#38bdf8]" />
+                      <span>View JSON</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleCopyDataJson(selectedBlock.data, selectedBlock.index)}
+                  className="px-2.5 py-1 rounded-lg bg-[#0e1520] hover:bg-[#162232] border border-[#1f2d3d] text-[#38bdf8] hover:text-white text-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                  title="Copy full raw JSON"
+                >
+                  {copiedKey === `data-${selectedBlock.index}` ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400 font-semibold">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy JSON</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Expanded Full Raw JSON Block */}
+            {showFullJson && (
+              <div className="mt-2.5 pt-2.5 border-t border-[#141e2a] space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-[#6d8095]">
+                  <span className="font-mono text-[10px] text-[#38bdf8] uppercase tracking-wider">
+                    Full Raw JSON ({typeof selectedBlock.data === "object" && selectedBlock.data !== null ? `${Object.keys(selectedBlock.data).length} top-level fields` : "raw"})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowFullJson(false)}
+                    className="text-[#8a99ad] hover:text-white flex items-center gap-1 cursor-pointer text-xs"
+                  >
+                    <EyeOff className="w-3 h-3" />
+                    <span>Hide JSON</span>
+                  </button>
+                </div>
+
+                <pre className="p-3 rounded-lg bg-[#080d14] border border-[#172230] text-emerald-300 font-mono text-xs overflow-x-auto max-h-72 leading-relaxed selection:bg-emerald-500/30">
+                  {typeof selectedBlock.data === "string"
+                    ? selectedBlock.data
+                    : JSON.stringify(selectedBlock.data, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
