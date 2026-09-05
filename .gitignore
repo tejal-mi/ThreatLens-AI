@@ -1,0 +1,415 @@
+# ==========================================================
+# PYTHON
+# ==========================================================
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python build / distribution
+.Python
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+virtualenv/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Type checking / linting
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+
+# ==========================================================
+# NODE.JS
+# ==========================================================
+
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Package manager caches
+.npm/
+.yarn/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+
+# Vite
+.vite/
+vite.config.*.timestamp-*
+
+
+# ==========================================================
+# REACT / FRONTEND
+# ==========================================================
+
+# Next.js
+.next/
+.next/cache/
+
+# Gatsby
+.cache/
+
+personal/
+.personal/
+
+# React Native
+.expo/
+.expo-shared/
+
+
+# ==========================================================
+# ENVIRONMENT VARIABLES
+# ==========================================================
+
+.env
+.env.*
+!.env.example
+!.env.sample
+
+
+# ==========================================================
+# IDE / EDITORS
+# ==========================================================
+
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# JetBrains
+.idea/
+*.iml
+
+# Visual Studio
+.vs/
+
+# Vim
+*.swp
+*.swo
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+
+# ==========================================================
+# OS
+# ==========================================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+
+# ==========================================================
+# DATABASE / LOCAL DATA
+# ==========================================================
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# SQLite temporary files
+*.db-journal
+*.db-shm
+*.db-wal
+
+
+# ==========================================================
+# LOGS
+# ==========================================================
+
+*.log
+logs/
+
+
+# ==========================================================
+# TEMPORARY FILES
+# ==========================================================
+
+*.tmp
+*.temp
+*.bak
+
+
+# ==========================================================
+# SECRETS / LOCAL CONFIG
+# ==========================================================
+
+*.pem
+*.key
+*.crt
+
+config.local.*
+settings.local.*
+
+
+# ==========================================================
+# DOCKER
+# ==========================================================
+
+docker-compose.override.yml
+docker-compose.local.yml
+
+
+# ==========================================================
+# GENERATED FILES
+# ==========================================================
+
+*.generated.*
+
+backend_status*
+BACKEND_STATUS*
+backend-status*
+
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+virtualenv/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Type checking / linting
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+
+# ==========================================================
+# NODE.JS
+# ==========================================================
+
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Package manager caches
+.npm/
+.yarn/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+
+# Vite
+.vite/
+vite.config.*.timestamp-*
+
+
+# ==========================================================
+# REACT / FRONTEND
+# ==========================================================
+
+# Next.js
+.next/
+.next/cache/
+
+# Gatsby
+.cache/
+
+personal/
+.personal/
+
+# React Native
+.expo/
+.expo-shared/
+
+
+# ==========================================================
+# ENVIRONMENT VARIABLES
+# ==========================================================
+
+.env
+.env.*
+!.env.example
+!.env.sample
+
+
+# ==========================================================
+# IDE / EDITORS
+# ==========================================================
+
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# JetBrains
+.idea/
+*.iml
+
+# Visual Studio
+.vs/
+
+# Vim
+*.swp
+*.swo
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+
+# ==========================================================
+# OS
+# ==========================================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+
+# ==========================================================
+# DATABASE / LOCAL DATA
+# ==========================================================
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# SQLite temporary files
+*.db-journal
+*.db-shm
+*.db-wal
+
+
+# ==========================================================
+# LOGS
+# ==========================================================
+
+*.log
+logs/
+
+
+# ==========================================================
+# TEMPORARY FILES
+# ==========================================================
+
+*.tmp
+*.temp
+*.bak
+
+
+# ==========================================================
+# SECRETS / LOCAL CONFIG
+# ==========================================================
+
+*.pem
+*.key
+*.crt
+
+config.local.*
+settings.local.*
+
+
+# ==========================================================
+# DOCKER
+# ==========================================================
+
+docker-compose.override.yml
+docker-compose.local.yml
+
+
+# ==========================================================
+# GENERATED FILES
+# ==========================================================
+
+*.generated.*
+
+backend_status*
+BACKEND_STATUS*
+backend-status*
+
+
+# ==========================================================
+# LOCAL DEVELOPMENT / TESTING
+# ==========================================================
+
+# Local test script
+test.py
+ThreatLensGo/opencode.json
+
+# ThreatLens Agent SQLite Index Databases
+*.db
+*.db-wal
+*.db-shm
+.threatlens_index*
