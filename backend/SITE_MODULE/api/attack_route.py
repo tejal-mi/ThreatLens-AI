@@ -47,7 +47,7 @@ def post_attack_route(
         )
 
     return post_attack(
-        account_id=account_id,
+        user=user,
         **attack.model_dump(),
     )
 
