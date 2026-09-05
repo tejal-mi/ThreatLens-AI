@@ -1,0 +1,39 @@
+from connect import auth
+from fastapi import APIRouter, Depends
+from SITE_MODULE.schema.usage import UsageUpdateRequest
+
+from SITE_MODULE.service.usage_service import (
+    set_usage,
+    get_usage,
+)
+
+
+router = APIRouter(
+    prefix="/usage",
+    tags=["Usage"],
+)
+
+
+@router.get("")
+def get_account_usage(
+    user=Depends(auth.deps.get_current),
+):
+    account_id = user["account"]["id"]
+    return get_usage(
+        account_id=account_id,
+    )
+
+
+@router.put("")
+def update_account_usage(
+    body : UsageUpdateRequest,
+    user=Depends(auth.deps.get_current),
+):
+    account_id = user["account"]["id"]
+
+    return set_usage(
+        account_id=account_id,
+        prompt_tokens=body.prompt_tokens,
+        completion_tokens=body.completion_tokens,
+        plan=body.plan,
+    )
