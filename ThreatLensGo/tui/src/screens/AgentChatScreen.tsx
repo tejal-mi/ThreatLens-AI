@@ -6,6 +6,10 @@ import { ToolBadge } from '../components/ToolBadge.js';
 import { DiffApprovalModal } from '../components/DiffApprovalModal.js';
 import { Spinner } from '../components/Spinner.js';
 import { useNavigation } from '../state/navigation.js';
+import { useTheme } from '../state/themeContext.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import { THEMES } from '../theme/themes.js';
+import type { ThemeId } from '../theme/types.js';
 import { AgentController, AgentEvent, DiffApprovalPayload } from '../agent/types.js';
 import { ThreatLensAgentManager, AgentManagerStats } from '../agent/agentManager.js';
 import { MockAgentController } from '../agent/MockAgentController.js';
@@ -37,7 +41,9 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
   chatId: initialChatId,
   initialPrompt,
 }) => {
-  const { pop } = useNavigation();
+  const { push, pop } = useNavigation();
+  const { theme, setTheme } = useTheme();
+  const { rows } = useTerminalSize();
 
   const [controller, setController] = useState<AgentController | null>(customController || null);
   const [managerStats, setManagerStats] = useState<AgentManagerStats | null>(null);
@@ -48,6 +54,7 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
   const [activeApproval, setActiveApproval] = useState<DiffApprovalPayload | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('Initializing codebase index and agent engine...');
   const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [thinkingText, setThinkingText] = useState<string>('');
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [limits, setLimits] = useState<LimitData | null>(null);
 
@@ -115,6 +122,8 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
   const managerRef = useRef<ThreatLensAgentManager | null>(null);
   const textBufferRef = useRef<string>('');
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const thinkingBufferRef = useRef<string>('');
+  const thinkingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const flushTextBuffer = () => {
     if (textBufferRef.current) {
@@ -171,6 +180,9 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
       if (flushTimerRef.current) {
         clearTimeout(flushTimerRef.current);
       }
+      if (thinkingTimerRef.current) {
+        clearTimeout(thinkingTimerRef.current);
+      }
       if (managerRef.current) {
         managerRef.current.shutdown().catch(() => {});
       }
@@ -218,6 +230,12 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
       switch (event.type) {
         case 'token':
           setIsRunning(true);
+          if (thinkingTimerRef.current) {
+            clearTimeout(thinkingTimerRef.current);
+            thinkingTimerRef.current = null;
+          }
+          thinkingBufferRef.current = '';
+          setThinkingText('');
           textBufferRef.current += event.delta;
           // 80ms batch buffer — optimal balance between responsiveness and terminal redraw frequency
           if (!flushTimerRef.current) {
@@ -225,6 +243,17 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
               flushTimerRef.current = null;
               flushTextBuffer();
             }, 80);
+          }
+          break;
+
+        case 'reasoning':
+          setIsRunning(true);
+          thinkingBufferRef.current = (thinkingBufferRef.current + event.delta).slice(-160);
+          if (!thinkingTimerRef.current) {
+            thinkingTimerRef.current = setTimeout(() => {
+              thinkingTimerRef.current = null;
+              setThinkingText(thinkingBufferRef.current);
+            }, 100);
           }
           break;
 
@@ -237,8 +266,14 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
             clearTimeout(flushTimerRef.current);
             flushTimerRef.current = null;
           }
+          if (thinkingTimerRef.current) {
+            clearTimeout(thinkingTimerRef.current);
+            thinkingTimerRef.current = null;
+          }
+          thinkingBufferRef.current = '';
           flushTextBuffer();
           setIsRunning(true);
+          setThinkingText('');
           setTools((prev) => [
             ...prev.filter((t) => t.callId !== event.callId),
             {
@@ -265,6 +300,11 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
             clearTimeout(flushTimerRef.current);
             flushTimerRef.current = null;
           }
+          if (thinkingTimerRef.current) {
+            clearTimeout(thinkingTimerRef.current);
+            thinkingTimerRef.current = null;
+          }
+          thinkingBufferRef.current = '';
           flushTextBuffer();
           setActiveApproval(event.payload);
           setStatusMessage('Waiting for user code modification approval');
@@ -289,8 +329,14 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
             clearTimeout(flushTimerRef.current);
             flushTimerRef.current = null;
           }
+          if (thinkingTimerRef.current) {
+            clearTimeout(thinkingTimerRef.current);
+            thinkingTimerRef.current = null;
+          }
+          thinkingBufferRef.current = '';
           flushTextBuffer();
           setIsRunning(false);
+          setThinkingText('');
           setActiveApproval(null);
           setStatusMessage(`Finished: ${event.summary}`);
           setCurrentAgentText((prev) => {
@@ -312,8 +358,14 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
             clearTimeout(flushTimerRef.current);
             flushTimerRef.current = null;
           }
+          if (thinkingTimerRef.current) {
+            clearTimeout(thinkingTimerRef.current);
+            thinkingTimerRef.current = null;
+          }
+          thinkingBufferRef.current = '';
           flushTextBuffer();
           setIsRunning(false);
+          setThinkingText('');
           setActiveApproval(null);
           setStatusMessage(`Error: ${event.error}`);
           setCurrentAgentText((prev) => {
@@ -344,7 +396,46 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
 
   const handleSend = async (textToSend?: string) => {
     const q = (textToSend ?? inputQuery).trim();
-    if (!q || isRunning || activeApproval || !controller) return;
+    if (!q) return;
+
+    // Claude Code-style /theme slash command
+    if (q.startsWith('/theme') || q === '/themes') {
+      const parts = q.split(/\s+/);
+      setInputQuery('');
+      if (parts.length === 1 || parts[1] === 'picker' || parts[1] === 'select') {
+        push({ type: 'theme' });
+        return;
+      }
+      const requested = parts[1].toLowerCase() as ThemeId;
+      if (requested in THEMES) {
+        const matched = THEMES[requested];
+        setTheme(requested);
+        const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: q };
+        const agentMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          sender: 'agent',
+          text: `🎨 Theme switched to "${matched.name}". Preferences saved to ~/.threatlensgo/config.json.`,
+        };
+        const updated = [...latestMessagesRef.current, userMsg, agentMsg];
+        setMessages(updated);
+        latestMessagesRef.current = updated;
+        setStatusMessage(`Active theme: ${matched.name}`);
+        return;
+      } else {
+        const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: q };
+        const agentMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          sender: 'agent',
+          text: `⚠ Unknown theme "${parts[1]}".\nAvailable themes: ${Object.keys(THEMES).join(', ')}.\nType /theme to open the interactive theme picker.`,
+        };
+        const updated = [...latestMessagesRef.current, userMsg, agentMsg];
+        setMessages(updated);
+        latestMessagesRef.current = updated;
+        return;
+      }
+    }
+
+    if (isRunning || activeApproval || !controller) return;
 
     const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: q };
     const updatedMessages = [...latestMessagesRef.current, userMsg];
@@ -437,8 +528,10 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
   const formatSnippet = (text: string, isLatest: boolean): string => {
     if (!text) return '';
     const lines = text.split('\n');
-    if (!isLatest && lines.length > 4) {
-      return lines.slice(0, 4).join('\n') + `\n... (+${lines.length - 4} lines)`;
+    // Ensure message line height never forces Ink into whole-terminal clearTerminal mode
+    const maxLines = isLatest ? Math.max(5, Math.min(14, (rows || 24) - 18)) : 3;
+    if (lines.length > maxLines) {
+      return lines.slice(0, maxLines).join('\n') + `\n... (+${lines.length - maxLines} lines)`;
     }
     return text;
   };
@@ -453,7 +546,7 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
       title="ThreatLens Autonomous Codebase Agent"
       subtitle={subtitle}
       breadcrumb="AGENT"
-      accentColor={isNearLimit ? 'yellow' : 'cyan'}
+      accentColor={isNearLimit ? theme.warning : theme.accent}
       statusText={isRunning ? 'PROCESSING' : activeApproval ? 'APPROVAL REQ' : isNearLimit ? 'NEAR LIMIT' : 'IDLE'}
       statusType={activeApproval || isNearLimit ? 'warning' : isRunning ? 'ready' : 'success'}
       keyHints={
@@ -469,14 +562,14 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
         <Box flexDirection="row" alignItems="center" marginBottom={1}>
           {isRunning && !currentAgentText ? (
             <Box marginRight={1}>
-              <Spinner type="dots" intervalMs={140} color="#38BDF8" bold />
+              <Spinner type="dots" intervalMs={140} color={theme.info} bold />
             </Box>
           ) : isRunning ? (
-            <Text color="#38BDF8" bold>⚡ </Text>
+            <Text color={theme.info} bold>⚡ </Text>
           ) : (
-            <Text color="green" bold>✓ </Text>
+            <Text color={theme.success} bold>✓ </Text>
           )}
-          <Text color="gray" italic>{statusMessage}</Text>
+          <Text color={theme.textMuted} italic>{statusMessage}</Text>
         </Box>
 
         {/* Message History — compact, bounded lines */}
@@ -490,12 +583,12 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
                 marginY={0}
                 paddingX={1}
                 borderStyle="round"
-                borderColor={msg.sender === 'user' ? 'cyan' : '#34D399'}
+                borderColor={msg.sender === 'user' ? theme.userMsg : theme.agentMsg}
               >
-                <Text bold color={msg.sender === 'user' ? 'cyan' : '#34D399'}>
+                <Text bold color={msg.sender === 'user' ? theme.userMsg : theme.agentMsg}>
                   {msg.sender === 'user' ? '◈ You:' : '⬡ Agent:'}
                 </Text>
-                <Text color="white">{formatSnippet(msg.text, isLatest)}</Text>
+                <Text color={theme.text}>{formatSnippet(msg.text, isLatest)}</Text>
               </Box>
             );
           })}
@@ -504,7 +597,7 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
         {/* Running Tool Invocations */}
         {runningTools.length > 0 ? (
           <Box flexDirection="column" marginY={1}>
-            <Text color="#818CF8" bold>
+            <Text color={theme.secondary} bold>
               ⚡ Active Tools ({runningTools.length})
             </Text>
             {runningTools.map((t) => (
@@ -519,10 +612,10 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
           </Box>
         ) : null}
 
-        {/* Completed tools (compact, no animation) */}
-        {doneTools.length > 0 && !isRunning ? (
+        {/* Completed tools (compact, shows latest progress) */}
+        {doneTools.length > 0 ? (
           <Box flexDirection="column" marginY={0}>
-            {doneTools.slice(-2).map((t) => (
+            {doneTools.slice(-3).map((t) => (
               <ToolBadge
                 key={t.callId}
                 toolName={t.toolName}
@@ -531,6 +624,15 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
                 result={t.result}
               />
             ))}
+          </Box>
+        ) : null}
+
+        {/* Live Thinking / Reasoning Snippet */}
+        {thinkingText && isRunning && !currentAgentText ? (
+          <Box flexDirection="column" marginY={1} paddingX={1}>
+            <Text color={theme.textMuted} italic dimColor>
+              💭 Thinking: {thinkingText.trim()}...
+            </Text>
           </Box>
         ) : null}
 
@@ -553,12 +655,12 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
             marginY={1}
             paddingX={1}
             borderStyle="round"
-            borderColor="#34D399"
+            borderColor={theme.agentMsg}
           >
-            <Text bold color="#34D399">⬡ Agent:</Text>
-            <Text color="white">
+            <Text bold color={theme.agentMsg}>⬡ Agent:</Text>
+            <Text color={theme.text}>
               {currentAgentText}
-              {isRunning ? <Text color="#38BDF8" bold> ▌</Text> : null}
+              {isRunning ? <Text color={theme.info} bold> ▌</Text> : null}
             </Text>
           </Box>
         ) : null}
@@ -568,11 +670,11 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
           <Box flexDirection="column" marginTop={1}>
             <Box
               borderStyle="round"
-              borderColor={isRunning ? '#818CF8' : 'cyan'}
+              borderColor={isRunning ? theme.secondary : theme.highlight}
               paddingX={1}
               flexDirection="row"
             >
-              <Text bold color={isRunning ? '#818CF8' : 'cyan'}>{'> '}</Text>
+              <Text bold color={isRunning ? theme.secondary : theme.highlight}>{'> '}</Text>
               <TextInput
                 value={inputQuery}
                 onChange={setInputQuery}
@@ -581,15 +683,15 @@ export const AgentChatScreen: React.FC<AgentChatScreenProps> = ({
                 placeholder={
                   isRunning
                     ? 'Agent is executing tools...'
-                    : 'Ask agent to inspect code, run sectests, or fix vulnerabilities...'
+                    : 'Ask agent or type /theme to switch appearance...'
                 }
               />
             </Box>
             <Box marginTop={0} paddingX={1} flexDirection="row" justifyContent="space-between">
-              <Text color="gray" dimColor>
-                {'audit /api/search · fix sql injection · find symbols'}
+              <Text color={theme.textMuted} dimColor>
+                {'/theme · audit /api/search · fix sql injection · find symbols'}
               </Text>
-              <Text color="gray" dimColor>esc cancel / back</Text>
+              <Text color={theme.textMuted} dimColor>esc cancel / back</Text>
             </Box>
           </Box>
         )}

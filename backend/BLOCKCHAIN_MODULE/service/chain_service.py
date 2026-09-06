@@ -612,12 +612,3 @@ class InternalChain:
             raise ValueError(
                 "limit must be >= 1"
             )
-    def audit_chain_integrity(self) -> bool:
-        """Iteratively audit chain integrity from genesis to tip."""
-        if len(self.chain) < 2:
-            return True
-
-        for i in range(1, len(self.chain)):
-            if self.chain[i].get("prev") != self.chain[i - 1].get("hash"):
-                return False
-        return True
